@@ -3104,6 +3104,8 @@ mod tests {
         );
     }
 
+    // XXX test correct spans for placeholders
+
     #[test]
     fn tokenize_colon_placeholder() {
         #[derive(Debug)]
