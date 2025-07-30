@@ -10111,7 +10111,8 @@ fn test_placeholder() {
                     .with_empty_span()
             )),
             UnnamedExpr(Expr::Value(
-                Placeholder::named(PlaceholderKind::Colon, "x")
+                // XXX looks like colon placeholders should be enabled by default
+                Placeholder::named(PlaceholderKind::Derived, ":x")
                     .into_value()
                     .with_empty_span()
             )),
