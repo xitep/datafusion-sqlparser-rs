@@ -46,7 +46,10 @@ use crate::dialect::{
     SnowflakeDialect,
 };
 use crate::keywords::{Keyword, ALL_KEYWORDS, ALL_KEYWORDS_INDEX};
-use crate::{ast::DollarQuotedString, dialect::HiveDialect};
+use crate::{
+    ast::{DollarQuotedString, Placeholder, PlaceholderKind, PlaceholderValue},
+    dialect::HiveDialect,
+};
 
 /// SQL Token enumeration
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -209,7 +212,7 @@ pub enum Token {
     /// `||/`, a cube root math operator in PostgreSQL
     PGCubeRoot,
     /// `?` or `$` , a prepared statement arg placeholder
-    Placeholder(String),
+    Placeholder(Placeholder),
     /// `->`, used as a operator to extract json field in PostgreSQL
     Arrow,
     /// `->>`, used as a operator to extract json field as text in PostgreSQL
@@ -1522,9 +1525,10 @@ impl<'a> Tokenizer<'a> {
                         Some(':') => self.consume_and_return(chars, Token::DoubleColon),
                         Some('=') => self.consume_and_return(chars, Token::Assignment),
                         Some(c)
-                            if self.dialect.supports_colon_placeholder() && c.is_alphabetic() =>
+                            if self.dialect.supports_colon_placeholder() && c.is_alphanumeric() =>
                         {
-                            self.tokenize_colon_preceeded_placeholder(chars).map(Some)
+                            self.tokenize_placeholder_label(chars, PlaceholderKind::Colon, false)
+                                .map(Some)
                         }
                         _ => Ok(Some(Token::Colon)),
                     }
@@ -1661,6 +1665,9 @@ impl<'a> Tokenizer<'a> {
                         Some(sch) if self.dialect.is_identifier_start('@') => {
                             self.tokenize_identifier_or_keyword([ch, *sch], chars)
                         }
+                        Some(sch) if sch.is_alphanumeric() => self
+                            .tokenize_placeholder_label(chars, PlaceholderKind::AtSign, false)
+                            .map(Some),
                         _ => Ok(Some(Token::AtSign)),
                     }
                 }
@@ -1694,8 +1701,8 @@ impl<'a> Tokenizer<'a> {
                 }
                 '?' => {
                     chars.next();
-                    let s = peeking_take_while(chars, |ch| ch.is_numeric());
-                    Ok(Some(Token::Placeholder(String::from("?") + &s)))
+                    self.tokenize_placeholder_label(chars, PlaceholderKind::QuestionMark, true)
+                        .map(Some)
                 }
 
                 // identifier or keyword
@@ -1761,28 +1768,128 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    /// Tokenizes an identifier followed immediately after a colon,
-    /// aka named query parameter, e.g. `:name`. The next char of the
-    /// processed char stream is to be an alphabetic - panics otherwise.
-    fn tokenize_colon_preceeded_placeholder(
+    /// Tokenizes a required identifier followed immediately after a
+    /// placeholder discriminitor, aka named query parameter.  The
+    /// next char is to be an alphabetic.
+    ///
+    /// Does not handle [PlaceholderKind::Dollar], use
+    /// [Tokenizer::tokenize_dollar_preceded_value] instead.
+    fn tokenize_placeholder_label(
         &self,
         chars: &mut State,
+        kind: PlaceholderKind,
+        allow_empty: bool,
     ) -> Result<Token, TokenizerError> {
-        let mut s = String::with_capacity(16);
-        s.push(':');
-        s.push(chars.next().expect("initial character missing"));
-        while let Some(&ch) = chars.peek() {
-            if ch.is_alphanumeric()
-                || ch == '_'
-                || matches!(ch, '$' if self.dialect.supports_dollar_placeholder())
-            {
-                s.push(ch);
+        debug_assert_ne!(kind, PlaceholderKind::Dollar);
+
+        // check the first char and decide how to parse the input further
+        let (is_numeric, mut s) = match chars.peek() {
+            None => {
+                if allow_empty {
+                    return Ok(Token::Placeholder(Placeholder {
+                        kind,
+                        value: PlaceholderValue::None,
+                    }));
+                } else {
+                    chars.next();
+                    return self.tokenizer_error(chars.location(), "Expected label after '{kind}'");
+                }
+            }
+            Some(&ch) if ch.is_numeric() => {
+                let mut s = String::with_capacity(4);
                 chars.next();
+                s.push(ch);
+                (true, s)
+            }
+            Some(&ch)
+                if ch.is_alphabetic()
+                    || ch == '_'
+                    || matches!(ch, '$' if self.dialect.supports_dollar_placeholder()) =>
+            {
+                let mut s = String::with_capacity(16);
+                chars.next();
+                s.push(ch);
+                (false, s)
+            }
+            Some(_) => {
+                if allow_empty {
+                    return Ok(Token::Placeholder(Placeholder {
+                        kind,
+                        value: PlaceholderValue::None,
+                    }));
+                } else {
+                    chars.next();
+                    return self.tokenizer_error(
+                        chars.location(),
+                        "Invalid content after '{kind}', expected label or number",
+                    );
+                }
+            }
+        };
+        // ~ different parsing strategies based on the first char;
+        // at this point we either have to parse a number or a label
+        if is_numeric {
+            let value_loc = chars.location();
+            while let Some(&ch) = chars.peek() {
+                if ch.is_numeric() {
+                    chars.next();
+                    s.push(ch);
+                } else {
+                    break;
+                }
+            }
+            if chars
+                .peek()
+                .map(|&c| {
+                    c.is_alphabetic()
+                        || c == '_'
+                        // ~ either a number or a placeholder ident; mixing not allowed
+                        || (c == '$' && self.dialect.supports_dollar_placeholder())
+                })
+                .unwrap_or(false)
+            {
+                self.tokenizer_error(
+                    chars.location(),
+                    format!("Invalid character after placeholder '{kind}{s}'"),
+                )
             } else {
-                break;
+                Ok(Token::Placeholder(Placeholder {
+                    value: match s.parse::<u32>() {
+                        Ok(n) => PlaceholderValue::Number(n),
+                        Err(e) => {
+                            return self.tokenizer_error(
+                                value_loc,
+                                format!("Invalid placeholder number '{kind}{s}': {e}"),
+                            )
+                        }
+                    },
+                    kind,
+                }))
+            }
+        } else {
+            while let Some(&ch) = chars.peek() {
+                if ch.is_alphanumeric()
+                    || ch == '_'
+                    || matches!(ch, '$' if self.dialect.supports_dollar_placeholder())
+                {
+                    chars.next();
+                    s.push(ch);
+                } else {
+                    break;
+                }
+            }
+            match chars.peek() {
+                // if supports_dollar_placholder == true, we consumed trailing dollars already
+                Some('$') => self.tokenizer_error(
+                    chars.location(),
+                    format!("Invalid character after placeholder label '{kind}{s}'"),
+                ),
+                _ => Ok(Token::Placeholder(Placeholder {
+                    value: PlaceholderValue::Name(s),
+                    kind,
+                })),
             }
         }
-        Ok(Token::Placeholder(s))
     }
 
     /// Tokenize dollar preceded value (i.e: a string/placeholder)
@@ -1817,15 +1924,16 @@ impl<'a> Tokenizer<'a> {
                 chars.next();
             }
 
-            return if chars.peek().is_none() && !is_terminated {
+            if chars.peek().is_none() && !is_terminated {
                 self.tokenizer_error(chars.location(), "Unterminated dollar-quoted string")
             } else {
                 Ok(Token::DollarQuotedString(DollarQuotedString {
                     value: s,
                     tag: None,
                 }))
-            };
+            }
         } else {
+            let value_loc = chars.location();
             value.push_str(&peeking_take_while(chars, |ch| {
                 ch.is_alphanumeric()
                     || ch == '_'
@@ -1867,15 +1975,30 @@ impl<'a> Tokenizer<'a> {
                         }
                     }
                 }
+                Ok(Token::DollarQuotedString(DollarQuotedString {
+                    value: s,
+                    tag: if value.is_empty() { None } else { Some(value) },
+                }))
             } else {
-                return Ok(Token::Placeholder(String::from("$") + &value));
+                let kind = PlaceholderKind::Dollar;
+                Ok(Token::Placeholder(Placeholder {
+                    value: match value.chars().next() {
+                        None => PlaceholderValue::None,
+                        Some(c) if c.is_numeric() => match value.parse::<u32>() {
+                            Ok(n) => PlaceholderValue::Number(n),
+                            Err(e) => {
+                                return self.tokenizer_error(
+                                    value_loc,
+                                    format!("Invalid placeholder number '{kind}{value}': {e}"),
+                                )
+                            }
+                        },
+                        Some(_) => PlaceholderValue::Name(value),
+                    },
+                    kind,
+                }))
             }
         }
-
-        Ok(Token::DollarQuotedString(DollarQuotedString {
-            value: s,
-            tag: if value.is_empty() { None } else { Some(value) },
-        }))
     }
 
     fn tokenizer_error<R>(
@@ -2996,7 +3119,7 @@ mod tests {
                 ch.is_alphabetic() || ch == '_'
             }
             fn is_identifier_part(&self, ch: char) -> bool {
-                ch.is_alphabetic() || ch.is_ascii_digit() || ch == '_'
+                ch.is_alphanumeric() || ch == '_'
             }
         }
 
@@ -3009,7 +3132,10 @@ mod tests {
             vec![
                 Token::make_keyword("SELECT"),
                 Token::Whitespace(Whitespace::Space),
-                Token::Placeholder(":foo".into()),
+                Token::Placeholder(Placeholder {
+                    kind: PlaceholderKind::Colon,
+                    value: PlaceholderValue::Name("foo".into()),
+                }),
                 Token::Whitespace(Whitespace::Space),
                 Token::make_keyword("FROM"),
                 Token::Whitespace(Whitespace::Space),
@@ -3030,7 +3156,10 @@ mod tests {
             vec![
                 Token::make_keyword("SELECT"),
                 Token::Whitespace(Whitespace::Space),
-                Token::Placeholder(":foo$bar".into()),
+                Token::Placeholder(Placeholder {
+                    kind: PlaceholderKind::Colon,
+                    value: PlaceholderValue::Name("foo$bar".into()),
+                }),
                 Token::Whitespace(Whitespace::Space),
                 Token::make_keyword("FROM"),
                 Token::Whitespace(Whitespace::Space),
@@ -3044,8 +3173,8 @@ mod tests {
     }
 
     #[test]
-    fn tokenize_dollar_placeholder() {
-        let sql = String::from("SELECT $$, $$ABC$$, $ABC$, $ABC");
+    fn tokenize_questionmark_placeholders() {
+        let sql = String::from("SELECT ?, ?1, ?foo");
         let dialect = SQLiteDialect {};
         let tokens = Tokenizer::new(&dialect, &sql).tokenize().unwrap();
         assert_eq!(
@@ -3053,16 +3182,64 @@ mod tests {
             vec![
                 Token::make_keyword("SELECT"),
                 Token::Whitespace(Whitespace::Space),
-                Token::Placeholder("$$".into()),
+                Token::Placeholder(Placeholder {
+                    kind: PlaceholderKind::QuestionMark,
+                    value: PlaceholderValue::None,
+                }),
                 Token::Comma,
                 Token::Whitespace(Whitespace::Space),
-                Token::Placeholder("$$ABC$$".into()),
+                Token::Placeholder(Placeholder {
+                    kind: PlaceholderKind::QuestionMark,
+                    value: PlaceholderValue::Number(1),
+                }),
                 Token::Comma,
                 Token::Whitespace(Whitespace::Space),
-                Token::Placeholder("$ABC$".into()),
+                Token::Placeholder(Placeholder {
+                    kind: PlaceholderKind::QuestionMark,
+                    value: PlaceholderValue::Name("foo".into()),
+                })
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenize_dollar_placeholder() {
+        let sql = String::from("SELECT $$, $$ABC$$, $ABC$, $ABC, $12");
+        let dialect = SQLiteDialect {};
+        let tokens = Tokenizer::new(&dialect, &sql).tokenize().unwrap();
+        assert_eq!(
+            tokens,
+            vec![
+                Token::make_keyword("SELECT"),
+                Token::Whitespace(Whitespace::Space),
+                Token::Placeholder(Placeholder {
+                    kind: PlaceholderKind::Dollar,
+                    value: PlaceholderValue::Name("$".into()),
+                }),
                 Token::Comma,
                 Token::Whitespace(Whitespace::Space),
-                Token::Placeholder("$ABC".into()),
+                Token::Placeholder(Placeholder {
+                    kind: PlaceholderKind::Dollar,
+                    value: PlaceholderValue::Name("$ABC$$".into()),
+                }),
+                Token::Comma,
+                Token::Whitespace(Whitespace::Space),
+                Token::Placeholder(Placeholder {
+                    kind: PlaceholderKind::Dollar,
+                    value: PlaceholderValue::Name("ABC$".into()),
+                }),
+                Token::Comma,
+                Token::Whitespace(Whitespace::Space),
+                Token::Placeholder(Placeholder {
+                    kind: PlaceholderKind::Dollar,
+                    value: PlaceholderValue::Name("ABC".into()),
+                }),
+                Token::Comma,
+                Token::Whitespace(Whitespace::Space),
+                Token::Placeholder(Placeholder {
+                    kind: PlaceholderKind::Dollar,
+                    value: PlaceholderValue::Number(12),
+                }),
             ]
         );
     }

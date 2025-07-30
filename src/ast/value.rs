@@ -175,8 +175,8 @@ pub enum Value {
     Boolean(bool),
     /// `NULL` value
     Null,
-    /// `?` or `$` Prepared statement arg placeholder
-    Placeholder(String),
+    /// `?`, `$`, or ':' prepared statement arg placeholder
+    Placeholder(Placeholder),
 }
 
 impl ValueWithSpan {
@@ -589,5 +589,131 @@ impl fmt::Display for TrimWhereField {
             Leading => "LEADING",
             Trailing => "TRAILING",
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum PlaceholderKind {
+    /// A placeholder derived by the parser, not explicitly demarcated
+    /// in the parsed input.
+    Derived,
+
+    /// Example:
+    /// ```sql
+    /// SELECT ?, ?1, ?2
+    /// ```
+    /// Supports only [PlaceholderValue::None] and [PlaceholderValue::Number] values
+    QuestionMark,
+
+    /// Example:
+    /// ```sql
+    /// SELECT @foo, @1, @2
+    /// ```
+    /// Supports only [PlaceholderValue::Label] and [PlaceholderValue::Number] values
+    AtSign,
+
+    /// Example:
+    /// ```sql
+    /// SELECT $, $1, $2, $foo
+    /// ```
+    /// Supports all [PlaceholderValue::None], [PlaceholderValue::Label],
+    /// and [PlaceholderValue::Number] variants
+    Dollar,
+
+    /// Example:
+    /// ```sql
+    /// SELECT :1, :foo
+    /// ```
+    /// Supports only [PlaceholderValue::Label] and [PlaceholderValue::Number] values
+    Colon,
+}
+
+impl fmt::Display for PlaceholderKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                PlaceholderKind::Derived => "",
+                PlaceholderKind::QuestionMark => "?",
+                PlaceholderKind::AtSign => "@",
+                PlaceholderKind::Dollar => "$",
+                PlaceholderKind::Colon => ":",
+            }
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum PlaceholderValue {
+    /// An innominate (ie. unnamed and non-numbered) placeholder,
+    /// e.g. `SELECT ?` or `SELECT $`
+    None,
+    /// A label / name of a named placeholder,
+    /// e.g. `"foo"` in `SELECT :foo`
+    Name(String),
+    /// The number value of a numbered placeholder,
+    /// e.g. `42` in `SELECT ?42` or `SELECT $42`
+    Number(u32),
+}
+
+impl fmt::Display for PlaceholderValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PlaceholderValue::None => Ok(()),
+            PlaceholderValue::Name(ref s) => f.write_str(s),
+            PlaceholderValue::Number(n) => write!(f, "{n}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct Placeholder {
+    pub kind: PlaceholderKind,
+    pub value: PlaceholderValue,
+}
+
+impl From<Placeholder> for Value {
+    fn from(value: Placeholder) -> Self {
+        Value::Placeholder(value)
+    }
+}
+
+impl Placeholder {
+    pub fn innominate(kind: PlaceholderKind) -> Self {
+        Self {
+            kind,
+            value: PlaceholderValue::None,
+        }
+    }
+
+    pub fn named<S: Into<String>>(kind: PlaceholderKind, label: S) -> Self {
+        Self {
+            kind,
+            value: PlaceholderValue::Name(label.into()),
+        }
+    }
+
+    pub fn numbered(kind: PlaceholderKind, number: u32) -> Self {
+        Self {
+            kind,
+            value: PlaceholderValue::Number(number),
+        }
+    }
+
+    pub fn into_value(self) -> Value {
+        self.into()
+    }
+}
+
+impl fmt::Display for Placeholder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}{}", self.kind, self.value)
     }
 }

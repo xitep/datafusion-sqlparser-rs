@@ -100,7 +100,8 @@ pub use self::trigger::{
 
 pub use self::value::{
     escape_double_quote_string, escape_quoted_string, DateTimeField, DollarQuotedString,
-    NormalizationForm, TrimWhereField, Value, ValueWithSpan,
+    NormalizationForm, Placeholder, PlaceholderKind, PlaceholderValue, TrimWhereField, Value,
+    ValueWithSpan,
 };
 
 use crate::ast::helpers::key_value_options::KeyValueOptions;
