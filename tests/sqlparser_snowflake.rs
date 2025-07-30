@@ -2707,7 +2707,11 @@ fn test_number_placeholder() {
     let sql_only_select = "SELECT :1";
     let select = snowflake().verified_only_select(sql_only_select);
     assert_eq!(
-        &Expr::Value((Value::Placeholder(":1".into())).with_empty_span()),
+        &Expr::Value(
+            Placeholder::numbered(PlaceholderKind::Colon, 1)
+                .into_value()
+                .with_empty_span()
+        ),
         expr_from_projection(only(&select.projection))
     );
 

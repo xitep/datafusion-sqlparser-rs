@@ -1916,7 +1916,9 @@ fn parse_pg_on_conflict() {
                             vec!["dname".into()]
                         )),
                         value: Expr::Value(
-                            (Value::Placeholder("$1".to_string())).with_empty_span()
+                            Placeholder::numbered(PlaceholderKind::Dollar, 1)
+                                .into_value()
+                                .with_empty_span()
                         )
                     },],
                     selection: Some(Expr::BinaryOp {
@@ -1927,7 +1929,9 @@ fn parse_pg_on_conflict() {
                         })),
                         op: BinaryOperator::Gt,
                         right: Box::new(Expr::Value(
-                            (Value::Placeholder("$2".to_string())).with_empty_span()
+                            Placeholder::numbered(PlaceholderKind::Dollar, 2)
+                                .into_value()
+                                .with_empty_span()
                         ))
                     })
                 }),
@@ -1963,7 +1967,9 @@ fn parse_pg_on_conflict() {
                             vec!["dname".into()]
                         )),
                         value: Expr::Value(
-                            (Value::Placeholder("$1".to_string())).with_empty_span()
+                            Placeholder::numbered(PlaceholderKind::Dollar, 1)
+                                .into_value()
+                                .with_empty_span()
                         )
                     },],
                     selection: Some(Expr::BinaryOp {
@@ -1974,7 +1980,9 @@ fn parse_pg_on_conflict() {
                         })),
                         op: BinaryOperator::Gt,
                         right: Box::new(Expr::Value(
-                            (Value::Placeholder("$2".to_string())).with_empty_span()
+                            Placeholder::numbered(PlaceholderKind::Dollar, 2)
+                                .into_value()
+                                .with_empty_span()
                         ))
                     })
                 }),

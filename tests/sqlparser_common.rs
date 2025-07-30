@@ -10047,7 +10047,9 @@ fn test_placeholder() {
             left: Box::new(Expr::Identifier(Ident::new("id"))),
             op: BinaryOperator::Eq,
             right: Box::new(Expr::Value(
-                (Value::Placeholder("$Id1".into())).with_empty_span()
+                Placeholder::named(PlaceholderKind::Dollar, "Id1")
+                    .into_value()
+                    .with_empty_span()
             )),
         })
     );
@@ -10055,10 +10057,16 @@ fn test_placeholder() {
     let ast = dialects.verified_query("SELECT * FROM student LIMIT $1 OFFSET $2");
     let expected_limit_clause = LimitClause::LimitOffset {
         limit: Some(Expr::Value(
-            (Value::Placeholder("$1".into())).with_empty_span(),
+            Placeholder::numbered(PlaceholderKind::Dollar, 1)
+                .into_value()
+                .with_empty_span(),
         )),
         offset: Some(Offset {
-            value: Expr::Value((Value::Placeholder("$2".into())).with_empty_span()),
+            value: Expr::Value(
+                Placeholder::numbered(PlaceholderKind::Dollar, 2)
+                    .into_value()
+                    .with_empty_span(),
+            ),
             rows: OffsetRows::None,
         }),
         limit_by: vec![],
@@ -10085,7 +10093,9 @@ fn test_placeholder() {
             left: Box::new(Expr::Identifier(Ident::new("id"))),
             op: BinaryOperator::Eq,
             right: Box::new(Expr::Value(
-                (Value::Placeholder("?".into())).with_empty_span()
+                Placeholder::innominate(PlaceholderKind::QuestionMark)
+                    .into_value()
+                    .with_empty_span()
             )),
         })
     );
@@ -10096,13 +10106,19 @@ fn test_placeholder() {
         ast.projection,
         vec![
             UnnamedExpr(Expr::Value(
-                (Value::Placeholder("$fromage_français".into())).with_empty_span()
+                Placeholder::named(PlaceholderKind::Dollar, "fromage_français")
+                    .into_value()
+                    .with_empty_span()
             )),
             UnnamedExpr(Expr::Value(
-                (Value::Placeholder(":x".into())).with_empty_span()
+                Placeholder::named(PlaceholderKind::Colon, "x")
+                    .into_value()
+                    .with_empty_span()
             )),
             UnnamedExpr(Expr::Value(
-                (Value::Placeholder("?123".into())).with_empty_span()
+                Placeholder::numbered(PlaceholderKind::QuestionMark, 123)
+                    .into_value()
+                    .with_empty_span()
             )),
         ]
     );

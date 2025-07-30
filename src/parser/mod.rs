@@ -9582,18 +9582,22 @@ impl<'a> Parser<'a> {
                 ok_value(Value::UnicodeStringLiteral(s.to_string()))
             }
             Token::HexStringLiteral(ref s) => ok_value(Value::HexStringLiteral(s.to_string())),
-            Token::Placeholder(ref s) => ok_value(Value::Placeholder(s.to_string())),
+            Token::Placeholder(x) => ok_value(Value::Placeholder(x)),
             tok @ Token::Colon | tok @ Token::AtSign => {
                 // Not calling self.parse_identifier(false)? because only in placeholder we want to check numbers as idfentifies
                 // This because snowflake allows numbers as placeholders
                 let next_token = self.next_token();
+                dbg!("this should not be needed!", &tok, &next_token); // XXX
                 let ident = match next_token.token {
                     Token::Word(w) => Ok(w.into_ident(next_token.span)),
                     Token::Number(w, false) => Ok(Ident::new(w)),
                     _ => self.expected("placeholder", next_token),
                 }?;
-                let placeholder = tok.to_string() + &ident.value;
-                ok_value(Value::Placeholder(placeholder))
+                Ok(Value::Placeholder(Placeholder {
+                    kind: PlaceholderKind::Derived,
+                    value: PlaceholderValue::Name(tok.to_string() + &ident.value),
+                })
+                .with_span(Span::new(span.start, ident.span.end)))
             }
             unexpected => self.expected(
                 "a value",
@@ -13283,7 +13287,13 @@ impl<'a> Parser<'a> {
                 None => {
                     let next_token = self.next_token();
                     if let Token::Word(w) = next_token.token {
-                        Expr::Value(Value::Placeholder(w.value).with_span(next_token.span))
+                        Expr::Value(
+                            Value::Placeholder(Placeholder {
+                                kind: PlaceholderKind::Derived,
+                                value: PlaceholderValue::Name(w.value),
+                            })
+                            .with_span(next_token.span),
+                        )
                     } else {
                         return parser_err!(
                             "Expecting number or byte length e.g. 100M",
@@ -13575,9 +13585,10 @@ impl<'a> Parser<'a> {
     fn parse_base_pattern(&mut self) -> Result<MatchRecognizePattern, ParserError> {
         match self.next_token().token {
             Token::Caret => Ok(MatchRecognizePattern::Symbol(MatchRecognizeSymbol::Start)),
-            Token::Placeholder(s) if s == "$" => {
-                Ok(MatchRecognizePattern::Symbol(MatchRecognizeSymbol::End))
-            }
+            Token::Placeholder(Placeholder {
+                kind: PlaceholderKind::Dollar,
+                ..
+            }) => Ok(MatchRecognizePattern::Symbol(MatchRecognizeSymbol::End)),
             Token::LBrace => {
                 self.expect_token(&Token::Minus)?;
                 let symbol = self.parse_identifier().map(MatchRecognizeSymbol::Named)?;
@@ -13618,7 +13629,10 @@ impl<'a> Parser<'a> {
             let quantifier = match token.token {
                 Token::Mul => RepetitionQuantifier::ZeroOrMore,
                 Token::Plus => RepetitionQuantifier::OneOrMore,
-                Token::Placeholder(s) if s == "?" => RepetitionQuantifier::AtMostOne,
+                Token::Placeholder(Placeholder {
+                    kind: PlaceholderKind::QuestionMark,
+                    value: PlaceholderValue::None,
+                }) => RepetitionQuantifier::AtMostOne,
                 Token::LBrace => {
                     // quantifier is a range like {n} or {n,} or {,m} or {n,m}
                     let token = self.next_token();

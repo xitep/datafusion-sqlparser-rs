@@ -26,7 +26,6 @@ use sqlparser::keywords::Keyword;
 use test_utils::*;
 
 use sqlparser::ast::SelectItem::UnnamedExpr;
-use sqlparser::ast::Value::Placeholder;
 use sqlparser::ast::*;
 use sqlparser::dialect::{GenericDialect, SQLiteDialect};
 use sqlparser::parser::{ParserError, ParserOptions};
@@ -370,7 +369,9 @@ fn test_placeholder() {
     assert_eq!(
         ast.projection[0],
         UnnamedExpr(Expr::Value(
-            (Value::Placeholder("@xxx".into())).with_empty_span()
+            Placeholder::named(PlaceholderKind::AtSign, "xxx")
+                .into_value()
+                .with_empty_span()
         )),
     );
 }
@@ -539,7 +540,9 @@ fn test_dollar_identifier_as_placeholder() {
             assert_eq!(
                 right,
                 Box::new(Expr::Value(
-                    (Placeholder("$id".to_string())).with_empty_span()
+                    Placeholder::named(PlaceholderKind::Dollar, "id")
+                        .into_value()
+                        .with_empty_span()
                 ))
             );
         }
@@ -554,7 +557,9 @@ fn test_dollar_identifier_as_placeholder() {
             assert_eq!(
                 right,
                 Box::new(Expr::Value(
-                    (Placeholder("$$".to_string())).with_empty_span()
+                    Placeholder::named(PlaceholderKind::Dollar, "$")
+                        .into_value()
+                        .with_empty_span()
                 ))
             );
         }
