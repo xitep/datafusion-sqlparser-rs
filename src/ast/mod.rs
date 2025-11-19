@@ -8635,6 +8635,7 @@ impl Display for MergeInsertKind {
 ///
 /// [Snowflake](https://docs.snowflake.com/en/sql-reference/sql/merge)
 /// [BigQuery](https://cloud.google.com/bigquery/docs/reference/standard-sql/dml-syntax#merge_statement)
+/// [Oracle](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/MERGE.html)
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
@@ -8653,6 +8654,10 @@ pub struct MergeInsertExpr {
     pub kind_token: AttachedToken,
     /// The insert type used by the statement.
     pub kind: MergeInsertKind,
+    /// An optional condition to restrict the insertion (Oracle specific)
+    ///
+    /// Enabled via [`Dialect::supports_merge_insert_predicate`](crate::dialect::Dialect::supports_merge_insert_predicate).
+    pub insert_predicate: Option<Expr>,
 }
 
 impl Display for MergeInsertExpr {
@@ -8660,7 +8665,11 @@ impl Display for MergeInsertExpr {
         if !self.columns.is_empty() {
             write!(f, "({}) ", display_comma_separated(self.columns.as_slice()))?;
         }
-        write!(f, "{}", self.kind)
+        write!(f, "{}", self.kind)?;
+        if let Some(predicate) = self.insert_predicate.as_ref() {
+            write!(f, " WHERE {}", predicate)?;
+        }
+        Ok(())
     }
 }
 
@@ -8673,6 +8682,7 @@ impl Display for MergeInsertExpr {
 ///
 /// [Snowflake](https://docs.snowflake.com/en/sql-reference/sql/merge)
 /// [BigQuery](https://cloud.google.com/bigquery/docs/reference/standard-sql/dml-syntax#merge_statement)
+/// [Oracle](https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlrf/MERGE.html)
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
@@ -8693,7 +8703,16 @@ pub enum MergeAction {
     Update {
         /// The `UPDATE` token that starts the sub-expression.
         update_token: AttachedToken,
+        /// The update assiment expressions
         assignments: Vec<Assignment>,
+        /// `where_clause` for the update (Oralce specific)
+        ///
+        /// Enabled via [`Dialect::supports_merge_update_predicate`](crate::dialect::Dialect::supports_merge_update_predicate).
+        update_predicate: Option<Expr>,
+        /// `delete_clause` for the update "delete where" (Oracle specific)
+        ///
+        /// Enabled via [`Dialect::supports_merge_update_delete_predicate`](crate::dialect::Dialect::supports_merge_update_delete_predicate).
+        delete_predicate: Option<Expr>,
     },
     /// A plain `DELETE` clause
     Delete {
@@ -8708,8 +8727,20 @@ impl Display for MergeAction {
             MergeAction::Insert(insert) => {
                 write!(f, "INSERT {insert}")
             }
-            MergeAction::Update { assignments, .. } => {
-                write!(f, "UPDATE SET {}", display_comma_separated(assignments))
+            MergeAction::Update {
+                update_token: _,
+                assignments,
+                update_predicate,
+                delete_predicate,
+            } => {
+                write!(f, "UPDATE SET {}", display_comma_separated(assignments))?;
+                if let Some(predicate) = update_predicate.as_ref() {
+                    write!(f, " WHERE {predicate}")?;
+                }
+                if let Some(predicate) = delete_predicate.as_ref() {
+                    write!(f, " DELETE WHERE {predicate}")?;
+                }
+                Ok(())
             }
             MergeAction::Delete { .. } => {
                 write!(f, "DELETE")
