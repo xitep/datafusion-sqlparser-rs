@@ -632,6 +632,15 @@ pub trait Dialect: Debug + Any {
     /// ```
     /// or
     /// ```sql
+    /// MERGE INTO FOO
+    /// USING FOO_IMP
+    ///    ON (FOO.ID = FOO_IMP.ID)
+    ///  WHEN NOT MATCHED THEN
+    ///      -- here: qualified with array subscripts
+    ///      INSERT (FOO.ID[1], FOO.NAME[1:12])
+    ///      VALUES (FOO_IMP.ID, UPPER(FOO_IMP.NAME))
+    /// or
+    /// ```sql
     /// MERGE INTO FOO X
     /// USING FOO_IMP
     ///    ON (X.ID = FOO_IMP.ID)
@@ -640,9 +649,6 @@ pub trait Dialect: Debug + Any {
     ///      INSERT (X.ID, X.NAME)
     ///      VALUES (FOO_IMP.ID, UPPER(FOO_IMP.NAME))
     /// ```
-    ///
-    /// Note: in the latter case, the qualifier must match the target table
-    /// name or its alias if one is present. The parser will enforce this.
     ///
     /// The default implementation always returns `false` not allowing the
     /// qualifiers.
