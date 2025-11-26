@@ -133,6 +133,7 @@ mod query;
 mod spans;
 pub use spans::Spanned;
 
+pub mod comments;
 mod trigger;
 mod value;
 
