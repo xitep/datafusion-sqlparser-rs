@@ -1416,6 +1416,7 @@ fn parse_escaped_quote_identifiers_with_escape() {
             with: None,
             body: Box::new(SetExpr::Select(Box::new(Select {
                 select_token: AttachedToken::empty(),
+                optimizer_hint: None,
                 distinct: None,
                 top: None,
                 top_before_distinct: false,
@@ -1471,6 +1472,7 @@ fn parse_escaped_quote_identifiers_with_no_escape() {
             with: None,
             body: Box::new(SetExpr::Select(Box::new(Select {
                 select_token: AttachedToken::empty(),
+                optimizer_hint: None,
                 distinct: None,
                 top: None,
                 top_before_distinct: false,
@@ -1518,7 +1520,7 @@ fn parse_escaped_backticks_with_escape() {
             with: None,
             body: Box::new(SetExpr::Select(Box::new(Select {
                 select_token: AttachedToken::empty(),
-
+                optimizer_hint: None,
                 distinct: None,
                 top: None,
                 top_before_distinct: false,
@@ -1570,7 +1572,7 @@ fn parse_escaped_backticks_with_no_escape() {
             with: None,
             body: Box::new(SetExpr::Select(Box::new(Select {
                 select_token: AttachedToken::empty(),
-
+                optimizer_hint: None,
                 distinct: None,
                 top: None,
                 top_before_distinct: false,
@@ -2390,7 +2392,7 @@ fn parse_select_with_numeric_prefix_column_name() {
                 q.body,
                 Box::new(SetExpr::Select(Box::new(Select {
                     select_token: AttachedToken::empty(),
-
+                    optimizer_hint: None,
                     distinct: None,
                     top: None,
                     top_before_distinct: false,
@@ -2565,6 +2567,7 @@ fn parse_select_with_concatenation_of_exp_number_and_numeric_prefix_column() {
                 q.body,
                 Box::new(SetExpr::Select(Box::new(Select {
                     select_token: AttachedToken::empty(),
+                    optimizer_hint: None,
                     distinct: None,
                     top: None,
                     top_before_distinct: false,
@@ -3197,6 +3200,7 @@ fn parse_substring_in_select() {
                     with: None,
                     body: Box::new(SetExpr::Select(Box::new(Select {
                         select_token: AttachedToken::empty(),
+                        optimizer_hint: None,
                         distinct: Some(Distinct::Distinct),
                         top: None,
                         top_before_distinct: false,
@@ -3520,6 +3524,7 @@ fn parse_hex_string_introducer() {
             with: None,
             body: Box::new(SetExpr::Select(Box::new(Select {
                 select_token: AttachedToken::empty(),
+                optimizer_hint: None,
                 distinct: None,
                 top: None,
                 top_before_distinct: false,
@@ -4352,5 +4357,20 @@ fn test_create_index_options() {
         .verified_stmt("CREATE INDEX idx_name ON t(c1, c2) USING BTREE ALGORITHM = INPLACE");
     mysql_and_generic().verified_stmt(
         "CREATE INDEX idx_name ON t(c1, c2) USING BTREE LOCK = EXCLUSIVE ALGORITHM = DEFAULT",
+    );
+}
+
+#[test]
+fn test_select_optimizer_hints() {
+    mysql_and_generic().verified_stmt(
+        "\
+       SELECT /*+ SET_VAR(optimizer_switch = 'mrr_cost_based=off') \
+                  SET_VAR(max_heap_table_size = 1G) */ 1",
+    );
+
+    mysql_and_generic().verified_stmt(
+        "\
+       SELECT /*+ SET_VAR(target_partitions=1) */ * FROM \
+           (SELECT /*+ SET_VAR(target_partitions=8) */ * FROM t1 LIMIT 1) AS dt",
     );
 }

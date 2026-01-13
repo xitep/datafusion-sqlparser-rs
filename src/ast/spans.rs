@@ -2229,6 +2229,7 @@ impl Spanned for Select {
     fn span(&self) -> Span {
         let Select {
             select_token,
+            optimizer_hint: _,
             distinct: _, // todo
             top: _,      // todo, mysql specific
             projection,
