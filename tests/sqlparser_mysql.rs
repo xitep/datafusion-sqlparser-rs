@@ -2635,6 +2635,7 @@ fn parse_update_with_joins() {
             returning,
             or: None,
             limit: None,
+            optimizer_hint: None,
             update_token: _,
         }) => {
             assert_eq!(
@@ -4385,4 +4386,10 @@ fn test_optimizer_hints() {
     mysql_dialect.verified_stmt("\
        REPLACE /*+ foobar */ INTO test \
        VALUES (1, 'Old', '2014-08-20 18:47:00')");
+
+    // ~ updates
+    mysql_dialect.verified_stmt("\
+       UPDATE /*+ quux */ table_name \
+       SET column1 = 1 \
+       WHERE 1 = 1");
 }
