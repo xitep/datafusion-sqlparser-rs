@@ -41,6 +41,8 @@ impl Parser<'_> {
 
     /// Parse a `MERGE` statement
     pub fn parse_merge(&mut self, merge_token: TokenWithSpan) -> Result<Statement, ParserError> {
+        let optimizer_hint = self.parse_optional_optimizer_hint()?;
+
         let into = self.parse_keyword(Keyword::INTO);
 
         let table = self.parse_table_factor()?;
@@ -57,6 +59,7 @@ impl Parser<'_> {
 
         Ok(Statement::Merge(Merge {
             merge_token: merge_token.into(),
+            optimizer_hint,
             into,
             table,
             source,

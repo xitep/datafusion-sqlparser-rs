@@ -2819,6 +2819,7 @@ WHERE id = 1
         // ~ individual tokens within the statement
         let Statement::Merge(Merge {
             merge_token,
+            optimizer_hint: _,
             into: _,
             table: _,
             source: _,
