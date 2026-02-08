@@ -11357,6 +11357,12 @@ fn parse_pivot_table() {
         verified_stmt(multiple_value_columns_sql).to_string(),
         multiple_value_columns_sql
     );
+
+    // assert optional "AS" keyword for aliases for pivot values
+    one_statement_parses_to(
+        "SELECT * FROM t PIVOT(SUM(1) FOR a.abc IN (1 x, 'two' y, three z))",
+        "SELECT * FROM t PIVOT(SUM(1) FOR a.abc IN (1 AS x, 'two' AS y, three AS z))",
+    );
 }
 
 #[test]
@@ -11571,6 +11577,12 @@ fn parse_unpivot_table() {
     assert_eq!(
         verified_stmt(sql_unpivot_with_alias_and_multi_value_and_qualifier).to_string(),
         sql_unpivot_with_alias_and_multi_value_and_qualifier
+    );
+
+    // optional AS keyword for unpivot value aliases
+    one_statement_parses_to(
+        "SELECT * FROM sales s UNPIVOT(q FOR quarter IN (Q1 Quater1, Q2 Quater2))",
+        "SELECT * FROM sales s UNPIVOT(q FOR quarter IN (Q1 AS Quater1, Q2 AS Quater2))",
     );
 }
 
