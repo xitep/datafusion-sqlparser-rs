@@ -1292,10 +1292,10 @@ impl<'a> Parser<'a> {
                                 id_parts.push(Ident::new(s))
                             }
                             Token::Mul => {
-                                return Ok(Expr::QualifiedWildcard(
+                                return Ok(Expr::QualifiedWildcard(QualifiedWildcardExpr(
                                     ObjectName::from(id_parts),
                                     AttachedToken(next_token),
-                                ));
+                                ).into()));
                             }
                             _ => {
                                 return self
@@ -1484,7 +1484,7 @@ impl<'a> Parser<'a> {
                         filter: None,
                         over: None,
                         within_group: vec![],
-                    })))
+                    }.into())))
                 }
             Keyword::CURRENT_TIMESTAMP
             | Keyword::CURRENT_TIME
@@ -1546,7 +1546,7 @@ impl<'a> Parser<'a> {
                         null_treatment: None,
                         over: None,
                         within_group: vec![],
-                    })))
+                    }.into())))
                 }
             Keyword::NOT => Ok(Some(self.parse_not()?)),
             Keyword::MATCH if self.dialect.supports_match_against() => {
@@ -1625,7 +1625,7 @@ impl<'a> Parser<'a> {
                     }),
                     body: Box::new(self.parse_expr()?),
                     syntax: LambdaSyntax::Arrow,
-                }))
+                }.into()))
             }
             // An unreserved word (likely an identifier) that is followed by another word (likley a data type)
             // which is then followed by an arrow, which indicates a lambda function with a single, typed parameter.
@@ -1643,7 +1643,7 @@ impl<'a> Parser<'a> {
                     }),
                     body: Box::new(self.parse_expr()?),
                     syntax: LambdaSyntax::Arrow,
-                }))
+                }.into()))
             }
             _ => Ok(Expr::Identifier(w.to_ident(w_span))),
         }
@@ -1686,19 +1686,19 @@ impl<'a> Parser<'a> {
                 DataType::Custom(..) => parser_err!("dummy", loc),
                 // MySQL supports using the `BINARY` keyword as a cast to binary type.
                 DataType::Binary(..) if self.dialect.supports_binary_kw_as_cast() => {
-                    Ok(Expr::Cast {
+                    Ok(Expr::Cast(CastExpr {
                         kind: CastKind::Cast,
                         expr: Box::new(parser.parse_expr()?),
                         data_type: DataType::Binary(None),
                         array: false,
                         format: None,
-                    })
+                    }.into()))
                 }
                 data_type => Ok(Expr::TypedString(TypedString {
                     data_type,
                     value: parser.parse_value()?,
                     uses_odbc_syntax: false,
-                })),
+                }.into())),
             }
         })?;
 
@@ -1912,7 +1912,7 @@ impl<'a> Parser<'a> {
             data_type: DataType::GeometricType(kind),
             value: self.parse_value()?,
             uses_odbc_syntax: false,
-        }))
+        }.into()))
     }
 
     /// Try to parse an [Expr::CompoundFieldAccess] like `a.b.c` or `a.b[1].c`.
@@ -2022,10 +2022,10 @@ impl<'a> Parser<'a> {
             if !Self::is_all_ident(&root, &chain) {
                 return self.expected("an identifier or a '*' after '.'", self.peek_token());
             };
-            Ok(Expr::QualifiedWildcard(
+            Ok(Expr::QualifiedWildcard(QualifiedWildcardExpr(
                 ObjectName::from(Self::exprs_to_idents(root, chain)?),
                 AttachedToken(wildcard_token),
-            ))
+            ).into()))
         } else if self.maybe_parse_outer_join_operator() {
             if !Self::is_all_ident(&root, &chain) {
                 return self.expected_at("column identifier before (+)", tok_index);
@@ -2241,7 +2241,7 @@ impl<'a> Parser<'a> {
                 params: OneOrManyWithParens::Many(params),
                 body: Box::new(expr),
                 syntax: LambdaSyntax::Arrow,
-            }))
+            }.into()))
         })
     }
 
@@ -2265,7 +2265,7 @@ impl<'a> Parser<'a> {
             params,
             body: Box::new(body),
             syntax: LambdaSyntax::LambdaKeyword,
-        }))
+        }.into()))
     }
 
     /// Parses the parameters of a lambda function with optional typing.
@@ -2340,7 +2340,7 @@ impl<'a> Parser<'a> {
                 data_type,
                 value,
                 uses_odbc_syntax: true,
-            }))
+            }.into()))
         })
     }
 
@@ -2358,13 +2358,13 @@ impl<'a> Parser<'a> {
             let fn_name = p.parse_object_name(false)?;
             let mut fn_call = p.parse_function_call(fn_name)?;
             fn_call.uses_odbc_syntax = true;
-            Ok(Expr::Function(fn_call))
+            Ok(Expr::Function(fn_call.into()))
         })
     }
 
     /// Parse a function call expression named by `name` and return it as an `Expr`.
     pub fn parse_function(&mut self, name: ObjectName) -> Result<Expr, ParserError> {
-        self.parse_function_call(name).map(Expr::Function)
+        self.parse_function_call(name).map(Into::into).map(Expr::Function)
     }
 
     fn parse_function_call(&mut self, name: ObjectName) -> Result<Function, ParserError> {
@@ -2487,7 +2487,7 @@ impl<'a> Parser<'a> {
             over: None,
             null_treatment: None,
             within_group: vec![],
-        }))
+        }.into()))
     }
 
     /// Parse window frame `UNITS` clause: `ROWS`, `RANGE`, or `GROUPS`.
@@ -2635,13 +2635,13 @@ impl<'a> Parser<'a> {
             None
         };
         let end_token = AttachedToken(self.expect_keyword(Keyword::END)?);
-        Ok(Expr::Case {
+        Ok(Expr::Case(CaseExpr {
             case_token,
             end_token,
             operand,
             conditions,
             else_result,
-        })
+        }.into()))
     }
 
     /// Parse an optional `FORMAT` clause for `CAST` expressions.
@@ -2678,14 +2678,14 @@ impl<'a> Parser<'a> {
             Default::default()
         };
         self.expect_token(&Token::RParen)?;
-        Ok(Expr::Convert {
+        Ok(Expr::Convert(ConvertExpr {
             is_try,
             expr: Box::new(expr),
             data_type: Some(data_type),
             charset: None,
             target_before_value: true,
             styles,
-        })
+        }.into()))
     }
 
     /// Parse a SQL CONVERT function:
@@ -2701,14 +2701,14 @@ impl<'a> Parser<'a> {
         if self.parse_keyword(Keyword::USING) {
             let charset = self.parse_object_name(false)?;
             self.expect_token(&Token::RParen)?;
-            return Ok(Expr::Convert {
+            return Ok(Expr::Convert(ConvertExpr {
                 is_try,
                 expr: Box::new(expr),
                 data_type: None,
                 charset: Some(charset),
                 target_before_value: false,
                 styles: vec![],
-            });
+            }.into()));
         }
         self.expect_token(&Token::Comma)?;
         let data_type = self.parse_data_type()?;
@@ -2718,14 +2718,14 @@ impl<'a> Parser<'a> {
             None
         };
         self.expect_token(&Token::RParen)?;
-        Ok(Expr::Convert {
+        Ok(Expr::Convert(ConvertExpr {
             is_try,
             expr: Box::new(expr),
             data_type: Some(data_type),
             charset,
             target_before_value: false,
             styles: vec![],
-        })
+        }.into()))
     }
 
     /// Parse a SQL CAST function e.g. `CAST(expr AS FLOAT)`
@@ -2737,13 +2737,13 @@ impl<'a> Parser<'a> {
         let array = self.parse_keyword(Keyword::ARRAY);
         let format = self.parse_optional_cast_format()?;
         self.expect_token(&Token::RParen)?;
-        Ok(Expr::Cast {
+        Ok(Expr::Cast(CastExpr {
             kind,
             expr: Box::new(expr),
             data_type,
             array,
             format,
-        })
+        }.into()))
     }
 
     /// Parse a SQL EXISTS expression e.g. `WHERE EXISTS(SELECT ...)`.
@@ -3267,7 +3267,7 @@ impl<'a> Parser<'a> {
             leading_precision,
             last_field,
             fractional_seconds_precision: fsec_precision,
-        }))
+        }.into()))
     }
 
     /// Peek at the next token and determine if it is a temporal unit
@@ -4020,13 +4020,13 @@ impl<'a> Parser<'a> {
                 ),
             }
         } else if Token::DoubleColon == *tok {
-            Ok(Expr::Cast {
+            Ok(Expr::Cast(CastExpr {
                 kind: CastKind::DoubleColon,
                 expr: Box::new(expr),
                 data_type: self.parse_data_type()?,
                 array: false,
                 format: None,
-            })
+            }.into()))
         } else if Token::ExclamationMark == *tok && self.dialect.supports_factorial_operator() {
             Ok(Expr::UnaryOp {
                 op: UnaryOperator::PGPostfixFactorial,
@@ -4261,13 +4261,13 @@ impl<'a> Parser<'a> {
 
     /// Parse a PostgreSQL casting style which is in the form of `expr::datatype`.
     pub fn parse_pg_cast(&mut self, expr: Expr) -> Result<Expr, ParserError> {
-        Ok(Expr::Cast {
+        Ok(Expr::Cast(CastExpr {
             kind: CastKind::DoubleColon,
             expr: Box::new(expr),
             data_type: self.parse_data_type()?,
             array: false,
             format: None,
-        })
+        }.into()))
     }
 
     /// Get the precedence of the next token
@@ -10906,7 +10906,7 @@ impl<'a> Parser<'a> {
         let object_name = self.parse_object_name(false)?;
         if self.peek_token().token == Token::LParen {
             match self.parse_function(object_name)? {
-                Expr::Function(f) => Ok(Statement::Call(f)),
+                Expr::Function(f) => Ok(Statement::Call(*f)),
                 other => parser_err!(
                     format!("Expected a simple procedure call but found: {other}"),
                     self.peek_token().span.start
@@ -13640,7 +13640,7 @@ impl<'a> Parser<'a> {
                     let function_expr = self.parse_function(function_name)?;
                     if let Expr::Function(function) = function_expr {
                         let alias = self.parse_identifier_optional_alias()?;
-                        pipe_operators.push(PipeOperator::Call { function, alias });
+                        pipe_operators.push(PipeOperator::Call { function: *function, alias });
                     } else {
                         return Err(ParserError::ParserError(
                             "Expected function call after CALL".to_string(),
@@ -17698,10 +17698,13 @@ impl<'a> Parser<'a> {
             .map(|keyword| Ident::new(format!("{keyword:?}")));
 
         match self.parse_wildcard_expr()? {
-            Expr::QualifiedWildcard(prefix, token) => Ok(SelectItem::QualifiedWildcard(
-                SelectItemQualifiedWildcardKind::ObjectName(prefix),
-                self.parse_wildcard_additional_options(token.0)?,
-            )),
+            Expr::QualifiedWildcard(wc) => {
+                let QualifiedWildcardExpr(prefix, token) = *wc;
+                Ok(SelectItem::QualifiedWildcard(
+                    SelectItemQualifiedWildcardKind::ObjectName(prefix),
+                    self.parse_wildcard_additional_options(token.0)?,
+                ))
+            }
             Expr::Wildcard(token) => Ok(SelectItem::Wildcard(
                 self.parse_wildcard_additional_options(token.0)?,
             )),

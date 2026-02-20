@@ -1013,42 +1013,11 @@ pub enum Expr {
         expr: Box<Expr>,
     },
     /// CONVERT a value to a different data type or character encoding. e.g. `CONVERT(foo USING utf8mb4)`
-    Convert {
-        /// CONVERT (false) or TRY_CONVERT (true)
-        /// <https://learn.microsoft.com/en-us/sql/t-sql/functions/try-convert-transact-sql?view=sql-server-ver16>
-        is_try: bool,
-        /// The expression to convert.
-        expr: Box<Expr>,
-        /// The target data type, if provided.
-        data_type: Option<DataType>,
-        /// Optional target character encoding (e.g., `utf8mb4`).
-        charset: Option<ObjectName>,
-        /// `true` when target precedes the value (MSSQL syntax).
-        target_before_value: bool,
-        /// How to translate the expression.
-        ///
-        /// [MSSQL]: https://learn.microsoft.com/en-us/sql/t-sql/functions/cast-and-convert-transact-sql?view=sql-server-ver16#style
-        styles: Vec<Expr>,
-    },
+    // XXX too big
+    Convert(Box<ConvertExpr>),
     /// `CAST` an expression to a different data type e.g. `CAST(foo AS VARCHAR(123))`
-    Cast {
-        /// The cast kind (e.g., `CAST`, `TRY_CAST`).
-        kind: CastKind,
-        /// Expression being cast.
-        expr: Box<Expr>,
-        /// Target data type.
-        data_type: DataType,
-        /// [MySQL] allows CAST(... AS type ARRAY) in functional index definitions for InnoDB
-        /// multi-valued indices. It's not really a datatype, and is only allowed in `CAST` in key
-        /// specifications, so it's a flag here.
-        ///
-        /// [MySQL]: https://dev.mysql.com/doc/refman/8.4/en/cast-functions.html#function_cast
-        array: bool,
-        /// Optional CAST(string_expression AS type FORMAT format_string_expression) as used by [BigQuery]
-        ///
-        /// [BigQuery]: https://cloud.google.com/bigquery/docs/reference/standard-sql/format-elements#formatting_syntax
-        format: Option<CastFormat>,
-    },
+    // XXX too big
+    Cast(Box<CastExpr>),
     /// AT a timestamp to a different timezone e.g. `FROM_UNIXTIME(0) AT TIME ZONE 'UTC-06:00'`
     AtTimeZone {
         /// Timestamp expression to shift.
@@ -1063,6 +1032,7 @@ pub enum Expr {
     /// ```sql
     /// EXTRACT(DateTimeField FROM <expr>) | EXTRACT(DateTimeField, <expr>)
     /// ```
+    // XXX almost too big
     Extract {
         /// Which datetime field is being extracted.
         field: DateTimeField,
@@ -1180,26 +1150,18 @@ pub enum Expr {
     /// A constant of form `<data_type> 'value'`.
     /// This can represent ANSI SQL `DATE`, `TIME`, and `TIMESTAMP` literals (such as `DATE '2020-01-01'`),
     /// as well as constants of other types (a non-standard PostgreSQL extension).
-    TypedString(TypedString),
+    // XXX too big
+    TypedString(Box<TypedString>),
     /// Scalar function call e.g. `LEFT(foo, 5)`
-    Function(Function),
+    // XXX far too big
+    Function(Box<Function>),
     /// `CASE [<operand>] WHEN <condition> THEN <result> ... [ELSE <result>] END`
     ///
     /// Note we only recognize a complete single expression as `<condition>`,
     /// not `< 0` nor `1, 2, 3` as allowed in a `<simple when clause>` per
     /// <https://jakewheat.github.io/sql-overview/sql-2011-foundation-grammar.html#simple-when-clause>
-    Case {
-        /// The attached `CASE` token (keeps original spacing/comments).
-        case_token: AttachedToken,
-        /// The attached `END` token (keeps original spacing/comments).
-        end_token: AttachedToken,
-        /// Optional operand expression after `CASE` (for simple CASE).
-        operand: Option<Box<Expr>>,
-        /// The `WHEN ... THEN` conditions and results.
-        conditions: Vec<CaseWhen>,
-        /// Optional `ELSE` result expression.
-        else_result: Option<Box<Expr>>,
-    },
+    // XXX too big
+    Case(Box<CaseExpr>),
     /// An exists expression `[ NOT ] EXISTS(SELECT ...)`, used in expressions like
     /// `WHERE [ NOT ] EXISTS (SELECT ...)`.
     Exists {
@@ -1265,7 +1227,8 @@ pub enum Expr {
     /// An array expression e.g. `ARRAY[1, 2]`
     Array(Array),
     /// An interval expression e.g. `INTERVAL '1' YEAR`
-    Interval(Interval),
+    // XXX too big
+    Interval(Box<Interval>),
     /// `MySQL` specific text search function [(1)].
     ///
     /// Syntax:
@@ -1288,7 +1251,8 @@ pub enum Expr {
     Wildcard(AttachedToken),
     /// Qualified wildcard, e.g. `alias.*` or `schema.table.*`.
     /// (Same caveats apply to `QualifiedWildcard` as to `Wildcard`.)
-    QualifiedWildcard(ObjectName, AttachedToken),
+    // XXX too big
+    QualifiedWildcard(Box<QualifiedWildcardExpr>),
     /// Some dialects support an older syntax for outer joins where columns are
     /// marked with the `(+)` operator in the WHERE clause, for example:
     ///
@@ -1316,7 +1280,8 @@ pub enum Expr {
     /// [ClickHouse](https://clickhouse.com/docs/en/sql-reference/functions#higher-order-functions---operator-and-lambdaparams-expr-function)
     /// [Databricks](https://docs.databricks.com/en/sql/language-manual/sql-ref-lambda-functions.html)
     /// [DuckDB](https://duckdb.org/docs/stable/sql/functions/lambda)
-    Lambda(LambdaFunction),
+    // XXX too big
+    Lambda(Box<LambdaFunction>),
     /// Checks membership of a value in a JSON array
     MemberOf(MemberOf),
 }
@@ -1326,6 +1291,90 @@ impl Expr {
     pub fn value(value: impl Into<ValueWithSpan>) -> Self {
         Expr::Value(value.into())
     }
+}
+
+/// A [`Expr::QualifiedWildcard`]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "visitor",
+    derive(Visit, VisitMut),
+    // visit(with = "visit_expr")
+)]
+pub struct QualifiedWildcardExpr(pub ObjectName, pub AttachedToken);
+
+/// A [`Expr::Convert`]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "visitor",
+    derive(Visit, VisitMut),
+    // visit(with = "visit_expr")
+)]
+pub struct ConvertExpr {
+    /// CONVERT (false) or TRY_CONVERT (true)
+    /// <https://learn.microsoft.com/en-us/sql/t-sql/functions/try-convert-transact-sql?view=sql-server-ver16>
+    pub is_try: bool,
+    /// The expression to convert.
+    pub expr: Box<Expr>,
+    /// The target data type, if provided.
+    pub data_type: Option<DataType>,
+    /// Optional target character encoding (e.g., `utf8mb4`).
+    pub charset: Option<ObjectName>,
+    /// `true` when target precedes the value (MSSQL syntax).
+    pub target_before_value: bool,
+    /// How to translate the expression.
+    ///
+    /// [MSSQL]: https://learn.microsoft.com/en-us/sql/t-sql/functions/cast-and-convert-transact-sql?view=sql-server-ver16#style
+    pub styles: Vec<Expr>,
+}
+
+/// A [`Expr::Cast`]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "visitor",
+    derive(Visit, VisitMut),
+    // visit(with = "visit_expr")
+)]
+pub struct CastExpr {
+    /// The cast kind (e.g., `CAST`, `TRY_CAST`).
+    pub kind: CastKind,
+    /// Expression being cast.
+    pub expr: Box<Expr>,
+    /// Target data type.
+    pub data_type: DataType,
+    /// [MySQL] allows CAST(... AS type ARRAY) in functional index definitions for InnoDB
+    /// multi-valued indices. It's not really a datatype, and is only allowed in `CAST` in key
+    /// specifications, so it's a flag here.
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/8.4/en/cast-functions.html#function_cast
+    pub array: bool,
+    /// Optional CAST(string_expression AS type FORMAT format_string_expression) as used by [BigQuery]
+    ///
+    /// [BigQuery]: https://cloud.google.com/bigquery/docs/reference/standard-sql/format-elements#formatting_syntax
+    pub format: Option<CastFormat>,
+}
+
+/// A [`Expr::Case`]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "visitor",
+    derive(Visit, VisitMut),
+    // visit(with = "visit_expr")
+)]
+pub struct CaseExpr {
+    /// The attached `CASE` token (keeps original spacing/comments).
+    pub case_token: AttachedToken,
+    /// The attached `END` token (keeps original spacing/comments).
+    pub end_token: AttachedToken,
+    /// Optional operand expression after `CASE` (for simple CASE).
+    pub operand: Option<Box<Expr>>,
+    /// The `WHEN ... THEN` conditions and results.
+    pub conditions: Vec<CaseWhen>,
+    /// Optional `ELSE` result expression.
+    pub else_result: Option<Box<Expr>>,
 }
 
 /// The contents inside the `[` and `]` in a subscript expression.
@@ -1668,7 +1717,7 @@ impl fmt::Display for Expr {
         match self {
             Expr::Identifier(s) => write!(f, "{s}"),
             Expr::Wildcard(_) => f.write_str("*"),
-            Expr::QualifiedWildcard(prefix, _) => write!(f, "{prefix}.*"),
+            Expr::QualifiedWildcard(wc) => write!(f, "{prefix}.*", prefix = wc.0),
             Expr::CompoundIdentifier(s) => write!(f, "{}", display_separated(s, ".")),
             Expr::CompoundFieldAccess { root, access_chain } => {
                 write!(f, "{root}")?;
@@ -1880,14 +1929,15 @@ impl fmt::Display for Expr {
                     write!(f, "{op}{expr}")
                 }
             }
-            Expr::Convert {
-                is_try,
-                expr,
-                target_before_value,
-                data_type,
-                charset,
-                styles,
-            } => {
+            Expr::Convert(convert) => {
+                let ConvertExpr {
+                    is_try,
+                    expr,
+                    target_before_value,
+                    data_type,
+                    charset,
+                    styles,
+                } = &**convert;
                 write!(f, "{}CONVERT(", if *is_try { "TRY_" } else { "" })?;
                 if let Some(data_type) = data_type {
                     if let Some(charset) = charset {
@@ -1907,41 +1957,44 @@ impl fmt::Display for Expr {
                 }
                 write!(f, ")")
             }
-            Expr::Cast {
-                kind,
-                expr,
-                data_type,
-                array,
-                format,
-            } => match kind {
-                CastKind::Cast => {
-                    write!(f, "CAST({expr} AS {data_type}")?;
-                    if *array {
-                        write!(f, " ARRAY")?;
+            Expr::Cast(cast) => {
+                let CastExpr {
+                    kind,
+                    expr,
+                    data_type,
+                    array,
+                    format,
+                } = &**cast;
+                match kind {
+                    CastKind::Cast => {
+                        write!(f, "CAST({expr} AS {data_type}")?;
+                        if *array {
+                            write!(f, " ARRAY")?;
+                        }
+                        if let Some(format) = format {
+                            write!(f, " FORMAT {format}")?;
+                        }
+                        write!(f, ")")
                     }
-                    if let Some(format) = format {
-                        write!(f, " FORMAT {format}")?;
+                    CastKind::TryCast => {
+                        if let Some(format) = format {
+                            write!(f, "TRY_CAST({expr} AS {data_type} FORMAT {format})")
+                        } else {
+                            write!(f, "TRY_CAST({expr} AS {data_type})")
+                        }
                     }
-                    write!(f, ")")
-                }
-                CastKind::TryCast => {
-                    if let Some(format) = format {
-                        write!(f, "TRY_CAST({expr} AS {data_type} FORMAT {format})")
-                    } else {
-                        write!(f, "TRY_CAST({expr} AS {data_type})")
+                    CastKind::SafeCast => {
+                        if let Some(format) = format {
+                            write!(f, "SAFE_CAST({expr} AS {data_type} FORMAT {format})")
+                        } else {
+                            write!(f, "SAFE_CAST({expr} AS {data_type})")
+                        }
+                    }
+                    CastKind::DoubleColon => {
+                        write!(f, "{expr}::{data_type}")
                     }
                 }
-                CastKind::SafeCast => {
-                    if let Some(format) = format {
-                        write!(f, "SAFE_CAST({expr} AS {data_type} FORMAT {format})")
-                    } else {
-                        write!(f, "SAFE_CAST({expr} AS {data_type})")
-                    }
-                }
-                CastKind::DoubleColon => {
-                    write!(f, "{expr}::{data_type}")
-                }
-            },
+            }
             Expr::Extract {
                 field,
                 syntax,
@@ -1971,13 +2024,14 @@ impl fmt::Display for Expr {
             Expr::Prefixed { prefix, value } => write!(f, "{prefix} {value}"),
             Expr::TypedString(ts) => ts.fmt(f),
             Expr::Function(fun) => fun.fmt(f),
-            Expr::Case {
-                case_token: _,
+            Expr::Case(case) => {
+                let CaseExpr {
+                    case_token: _,
                 end_token: _,
                 operand,
                 conditions,
-                else_result,
-            } => {
+                    else_result,
+                } = &**case;
                 f.write_str("CASE")?;
                 if let Some(operand) = operand {
                     f.write_str(" ")?;
@@ -7595,7 +7649,7 @@ pub enum FunctionArgExpr {
 impl From<Expr> for FunctionArgExpr {
     fn from(wildcard_expr: Expr) -> Self {
         match wildcard_expr {
-            Expr::QualifiedWildcard(prefix, _) => Self::QualifiedWildcard(prefix),
+            Expr::QualifiedWildcard(wc) => Self::QualifiedWildcard(wc.0),
             Expr::Wildcard(_) => Self::Wildcard,
             expr => Self::Expr(expr),
         }
