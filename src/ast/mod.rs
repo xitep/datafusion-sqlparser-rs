@@ -234,7 +234,7 @@ impl<T> Deref for Parens<T> {
     }
 }
 
-impl <T> DerefMut for Parens<T> {
+impl<T> DerefMut for Parens<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.content
     }
